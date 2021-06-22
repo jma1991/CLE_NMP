@@ -1,0 +1,141 @@
+---
+title: "Interactive data exploration"
+author: "James Ashmore"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output: workflowr::wflow_html
+editor_options:
+  chunk_output_type: console
+---
+
+## Setup
+
+Set chunk options:
+
+```{r}
+knitr::opts_chunk$set(eval = FALSE)
+```
+
+Load CRAN packages:
+
+```{r}
+library(rsconnect)
+```
+
+Include Bioconductor package repositories:
+
+```{r}
+options(repos = BiocManager::repositories())
+```
+
+Automatically answer yes to any user prompt:
+
+```{r}
+options(needs.promptUser = FALSE)
+```
+
+Delete existing shiny directory:
+
+```{r}
+unlink("shiny", recursive = TRUE)
+```
+
+Create shiny directory for interactive data exploration:
+
+```{r}
+dir.create("shiny", showWarnings = FALSE, mode = "0755")
+```
+
+## Applications {.tabset}
+
+### Processed data
+
+Create iSEE directory for processed data:
+
+```{r}
+dir.create("shiny/processed", showWarnings = FALSE, mode = "0755")
+```
+
+Copy processed data to iSEE directory:
+
+```{r}
+file.copy("output/02-data-processing.rds", "shiny/processed/data.rds", overwrite = TRUE)
+```
+
+Write code to iSEE application file:
+
+```{cat, engine.opts = list(file = "shiny/processed/app.R"), class.source = "r"}
+# Load required packages
+library(iSEE)
+library(SingleCellExperiment)
+library(BiocSingular)
+
+# Read experiment object
+sce <- readRDS("data.rds")
+
+# Rename brachyury gene name
+ind <- which(rowData(sce)$gene_id == "ENSMUSG00000062327")
+rowData(sce)$gene_name[ind] <- "Bra"
+
+# Make feature names unique
+rownames(sce) <- scuttle::uniquifyFeatureNames(rowData(sce)$gene_id, rowData(sce)$gene_name)
+
+# Identify NMP cells
+ids <- list(
+  "Sox2" = counts(sce)["Sox2", ] > 0,
+  "Bra" = counts(sce)["Bra", ] > 0
+)
+sce$NMP <- ids$Sox2 & ids$Bra
+
+# Identify preNeuro cells
+ids <- list(
+  "Sox2" = counts(sce)["Sox2", ] > 0,
+  "Nkx1-2" = counts(sce)["Nkx1-2", ] > 0,
+  "Bra" = counts(sce)["Bra", ] > 0
+)
+sce$preNeuro <- (ids$Sox2 & ids$`Nkx1-2`) & !ids$Bra
+
+# Identify preMeso cells
+ids <- list(
+  "Bra" = counts(sce)["Bra", ] > 0,
+  "Sox2" = counts(sce)["Sox2", ] > 0,
+  "Mixl1" = counts(sce)["Mixl1", ] > 0,
+  "Bmp4" = counts(sce)["Bmp4", ] > 0
+)
+sce$preMeso <- ids$Bra & !(ids$Sox2 | ids$Mixl1 | ids$Bmp4)
+
+# Identify LPM cells
+ids <- list(
+  "Hand1" = counts(sce)["Hand1", ] > 0,
+  "Foxf1" = counts(sce)["Foxf1", ] > 0
+)
+sce$LPM <- ids$Hand1 & ids$Foxf1
+
+# Set iSEE options
+iSEEOptions$set(downsample = TRUE)
+iSEEOptions$set(color.maxlevels = 37)
+
+# Create iSEE object
+iSEE(sce, appTitle = "CLE_NMP")
+```
+
+Deploy the iSEE application to the shiny server:
+
+```{r}
+deployApp(appDir = "shiny/processed", appName = "CLE_NMP", appTitle = "CLE_NMP", launch.browser = FALSE, forceUpdate = TRUE)
+```
+
+Allocate more memory to the iSEE application:
+
+```{r}
+configureApp(appName = "CLE_NMP", appDir = "shiny/processed", size = "xxlarge")
+```
+
+## Summary
+
+### Session
+
+Print session information:
+
+```{r}
+sessionInfo()
+```
