@@ -77,7 +77,7 @@ rownames(sce) <- uniquifyFeatureNames(rowData(sce)$gene_id, rowData(sce)$gene_na
 Save SCE object to disk:
 
 ```{r}
-saveRDS(sce, file = "data/01-data-loading.rds")
+saveRDS(sce, file = "output/01-data-loading.rds")
 ```
 
 Print session information

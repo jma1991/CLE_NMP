@@ -40,7 +40,7 @@ library(ggthemes)
 ## Import data
 
 ```{r}
-sce <- readRDS("data/01-data-loading.rds")
+sce <- readRDS("output/01-data-loading.rds")
 ```
 
 ## Quality control
@@ -265,7 +265,7 @@ ggplot(dat, aes(x, y, colour = cluster)) +
 Save SCE object to disk:
 
 ```{r}
-saveRDS(mnn, file = "data/02-data-processing.rds")
+saveRDS(mnn, file = "output/02-data-processing.rds")
 ```
 
 Print session information
