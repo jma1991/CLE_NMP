@@ -1,0 +1,87 @@
+---
+title: "Data loading"
+author: "James Ashmore"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output: workflowr::wflow_html
+editor_options:
+  chunk_output_type: console
+---
+
+## Setup
+
+Set chunk options:
+
+```{r}
+knitr::opts_chunk$set(
+  autodep    = TRUE,
+  cache      = TRUE,
+  cache.path = "cache/01-data-loading.Rmd/",
+  dev        = "png",
+  error      = FALSE,
+  message    = FALSE,
+  warning    = FALSE
+)
+```
+
+Load required packages:
+
+```{r}
+library(scater)
+library(scran)
+library(EnsDb.Mmusculus.v79)
+library(Matrix)
+```
+
+## Loading
+
+Import and parse cells data:
+
+```{r}
+cells <- read.delim("data/GSE132504_cellsData.txt", row.names = 1)
+
+colnames(cells) <- c("cell", "sample", "use")
+```
+
+Import and parse counts matrix:
+
+```{r}
+counts <- read.delim("data/GSE132504_ProcessedRaw_Counts.txt", row.names = 1)
+
+colnames(counts) <- sub(".", "-", colnames(counts), fixed = TRUE)
+
+counts <- counts[, cells$cell]
+
+counts <- as.matrix(counts)
+
+counts <- Matrix(counts, sparse = TRUE)
+```
+
+Create and parse genes data:
+
+```{r}
+genes <- mapIds(EnsDb.Mmusculus.v79, keys = rownames(counts), keytype = "SYMBOL", column = "GENEID")
+
+genes <- DataFrame(gene_id = unname(genes), gene_name = names(genes))
+```
+
+Create a SingleCellExperiment object:
+
+```{r}
+sce <- SingleCellExperiment(assays = list(counts = counts), colData = cells, rowData = genes)
+
+rownames(sce) <- uniquifyFeatureNames(rowData(sce)$gene_id, rowData(sce)$gene_name)
+```
+
+## Output
+
+Save SCE object to disk:
+
+```{r}
+saveRDS(sce, file = "data/01-data-loading.rds")
+```
+
+Print session information
+
+```{r}
+sessionInfo()
+```
