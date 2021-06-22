@@ -1,0 +1,275 @@
+---
+title: "Data processing"
+author: "James Ashmore"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output: workflowr::wflow_html
+editor_options:
+  chunk_output_type: console
+---
+
+## Setup
+
+Set chunk options:
+
+```{r}
+knitr::opts_chunk$set(
+  autodep    = TRUE,
+  cache      = TRUE,
+  cache.path = "cache/02-data-processing.Rmd/",
+  dev        = "png",
+  error      = FALSE,
+  message    = FALSE,
+  warning    = FALSE
+)
+```
+
+Load required packages:
+
+```{r}
+library(batchelor)
+library(scater)
+library(scran)
+library(EnsDb.Mmusculus.v79)
+library(org.Mm.eg.db)
+library(msigdbr)
+library(pheatmap)
+library(viridis)
+library(ggthemes)
+```
+
+## Import data
+
+```{r}
+sce <- readRDS("data/01-data-loading.rds")
+```
+
+## Quality control
+
+Quality control on the cells has already been performed by the authors, so we will just use their filtering :
+
+```{r}
+sce <- sce[, sce$use]
+```
+
+## Normalization
+
+```{r}
+sce <- logNormCounts(sce)
+```
+
+## Blacklist
+
+Create a blacklist of genes to ignore for feature selection:
+
+```{r}
+rowData(sce)$blacklist <- FALSE
+```
+
+Append Xist gene to blacklist:
+
+```{r}
+idx <- which(rowData(sce)$gene_id == "ENSMUSG00000086503")
+
+rowData(sce)$blacklist[idx] <- TRUE
+```
+
+Append Y chromosome genes to blacklist:
+
+```{r}
+nan <- is.na(rowData(sce)$gene_id)
+
+loc <- mapIds(EnsDb.Mmusculus.v79, keys = rowData(sce)$gene_id[!nan], keytype = "GENEID", column = "SEQNAME")
+
+loc <- loc[loc == "Y"]
+
+idx <- which(rowData(sce)$gene_id %in% names(loc))
+
+rowData(sce)$blacklist[idx] <- TRUE
+```
+
+Append MT chromosome genes to blacklist:
+
+```{r}
+nan <- is.na(rowData(sce)$gene_id)
+
+loc <- mapIds(EnsDb.Mmusculus.v79, keys = rowData(sce)$gene_id[!nan], keytype = "GENEID", column = "SEQNAME")
+
+loc <- loc[loc == "MT"]
+
+idx <- which(rowData(sce)$gene_id %in% names(loc))
+
+rowData(sce)$blacklist[idx] <- TRUE
+```
+
+Append cell-cycle genes to blacklist:
+
+```{r}
+org <- select(org.Mm.eg.db, keys = "GO:0007049", keytype = "GOALL", column = "ENSEMBL")
+
+idx <- which(rowData(sce)$gene_id %in% org$ENSEMBL)
+
+rowData(sce)$blacklist[idx] <- TRUE
+```
+
+Append ribosomal genes to blacklist:
+
+```{r}
+sig <- msigdbr(species = "Mus musculus", category = "C2")
+
+sig <- subset(sig, gs_name == "KEGG_RIBOSOME")
+
+org <- select(org.Mm.eg.db, keys = sig$gene_symbol, keytype = "SYMBOL", column = "ENSEMBL")
+
+idx <- which(rowData(sce)$gene_id %in% org$ENSEMBL)
+
+rowData(sce)$blacklist[idx] <- TRUE
+```
+
+## Variance modelling
+
+```{r}
+dec <- modelGeneVarByPoisson(sce, block = sce$sample)
+
+hvg <- dec$bio > 0
+
+nan <- rowData(sce)$blacklist
+
+hvg <- hvg & !nan
+```
+
+## Merging
+
+```{r}
+set.seed(1701)
+
+mnn <- correctExperiments(sce, 
+    batch = sce$sample, 
+    subset.row = hvg,
+    correct.all = TRUE,
+    PARAM = FastMnnParam(auto.merge = TRUE)
+)
+
+mnn$batch <- factor(mnn$batch)
+```
+
+## Clustering
+
+```{r}
+snn <- buildSNNGraph(mnn, use.dimred = "corrected")
+
+com <- igraph::cluster_louvain(snn)
+
+mnn$cluster <- factor(com$membership)
+```
+
+## Dimensionality reduction
+
+```{r}
+mnn <- runTSNE(mnn, dimred = "corrected", external_neighbors = TRUE)
+
+mnn <- runUMAP(mnn, dimred = "corrected", external_neighbors = TRUE)
+```
+
+## Cell cycle
+
+```{r}
+set.seed(1701)
+
+mcm <- readRDS(system.file("exdata", "mouse_cycle_markers.rds", package = "scran"))
+
+fit <- cyclone(mnn, mcm, gene.names = rowData(mnn)$gene_id)
+
+mnn$phase <- factor(fit$phases)
+```
+
+## Data exploration
+
+Create plotting data:
+
+```{r}
+dim <- reducedDim(mnn, "UMAP")
+
+dim <- as.data.frame(dim)
+
+colnames(dim) <- c("x", "y")
+
+dat <- colData(mnn)
+
+dat <- cbind(dim, dat)
+```
+
+Plot cells coloured by phase:
+
+```{r}
+phase_palette <- tableau_color_pal(palette = "Traffic")
+
+phase_nlevels <- nlevels(mnn$phase)
+
+phase_palette <- phase_palette(phase_nlevels)
+
+names(phase_palette) <- levels(mnn$phase)
+
+ggplot(dat, aes(x, y, colour = phase)) + 
+  geom_point(data = dim, aes(x, y), colour = "gainsboro") + 
+  geom_point() + 
+  scale_colour_manual(name = "Phase", values = phase_palette) + 
+  facet_wrap(~ batch) + 
+  theme_void() + 
+  theme(aspect.ratio = 1)
+```
+
+Plot cells coloured by batch:
+
+```{r}
+mnn$batch <- factor(mnn$batch)
+
+batch_palette <- tableau_color_pal(palette = "Tableau 10")
+
+batch_nlevels <- nlevels(mnn$batch)
+
+batch_palette <- batch_palette(batch_nlevels)
+
+names(batch_palette) <- levels(mnn$batch)
+
+ggplot(dat, aes(x, y, colour = batch)) + 
+  geom_point(data = dim, aes(x, y), colour = "gainsboro") + 
+  geom_point() + 
+  scale_colour_manual(name = "Batch", values = batch_palette) + 
+  facet_wrap(~ batch) + 
+  theme_void() + 
+  theme(aspect.ratio = 1)
+```
+
+Plot cells coloured by cluster:
+
+```{r}
+cluster_palette <- tableau_color_pal(palette = "Tableau 20")
+
+cluster_nlevels <- nlevels(mnn$cluster)
+
+cluster_palette <- cluster_palette(cluster_nlevels)
+
+names(cluster_palette) <- levels(mnn$cluster)
+
+ggplot(dat, aes(x, y, colour = cluster)) + 
+  geom_point(data = dim, aes(x, y), colour = "gainsboro") + 
+  geom_point() + 
+  scale_color_manual(name = "Cluster", values = cluster_palette) +  
+  facet_wrap(~ batch) + 
+  theme_void() + 
+  theme(aspect.ratio = 1)
+```
+
+## Output
+
+Save SCE object to disk:
+
+```{r}
+saveRDS(mnn, file = "data/02-data-processing.rds")
+```
+
+Print session information
+
+```{r}
+sessionInfo()
+```
